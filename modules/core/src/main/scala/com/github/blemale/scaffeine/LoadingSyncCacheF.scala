@@ -4,16 +4,21 @@ import com.github.benmanes.caffeine.cache.{LoadingCache => CaffeineLoadingCache}
 
 import scala.collection.JavaConverters._
 
-object LoadingCache {
+object LoadingSyncCacheF {
 
-  def apply[K, V](
+  def apply[F[_], K, V](
       loadingCache: CaffeineLoadingCache[K, V]
-  ): LoadingCache[K, V] =
-    new LoadingCache(loadingCache)
+  )(implicit
+      lift: Sync[F]
+  ): LoadingSyncCacheF[F, K, V] =
+    new LoadingSyncCacheF(loadingCache)
 }
 
-class LoadingCache[K, V](override val underlying: CaffeineLoadingCache[K, V])
-    extends Cache(underlying) {
+class LoadingSyncCacheF[F[_], K, V](
+    override val underlying: CaffeineLoadingCache[K, V]
+)(implicit
+    lift: Sync[F]
+) extends SyncCacheF[F, K, V](underlying) {
 
   /**
     * Returns the value associated with `key` in this cache, obtaining that value from
@@ -31,8 +36,8 @@ class LoadingCache[K, V](override val underlying: CaffeineLoadingCache[K, V])
     * @throws java.lang.RuntimeException      or Error if the `CacheLoader` does so, in which case the mapping
     *                                                       is left unestablished
     */
-  def get(key: K): V =
-    underlying.get(key)
+  def get(key: K): F[V] =
+    lift.lift(underlying.get(key))
 
   /**
     * Returns a map of the values associated with `keys`, creating or retrieving those values
@@ -44,8 +49,8 @@ class LoadingCache[K, V](override val underlying: CaffeineLoadingCache[K, V])
     * @throws java.util.concurrent.CompletionException  if a checked exception was thrown while loading the value
     * @throws java.lang.RuntimeException     or Error if the `loader` does so
     */
-  def getAll(keys: Iterable[K]): Map[K, V] =
-    underlying.getAll(keys.asJava).asScala.toMap
+  def getAll(keys: Iterable[K]): F[Map[K, V]] =
+    lift.lift(underlying.getAll(keys.asJava).asScala.toMap)
 
   /**
     * Loads a new value for the `key`, asynchronously. While the new value is loading the
@@ -53,8 +58,8 @@ class LoadingCache[K, V](override val underlying: CaffeineLoadingCache[K, V])
     *
     * @param key key with which a value may be associated
     */
-  def refresh(key: K): Unit =
-    underlying.refresh(key)
+  def refresh(key: K): F[Unit] =
+    lift.lift(underlying.refresh(key))
 
   override def toString = s"LoadingCache($underlying)"
 }

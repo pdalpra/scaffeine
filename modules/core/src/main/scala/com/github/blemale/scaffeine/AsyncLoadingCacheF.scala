@@ -3,21 +3,19 @@ package com.github.blemale.scaffeine
 import com.github.benmanes.caffeine.cache.{AsyncLoadingCache => CaffeineAsyncLoadingCache}
 
 import scala.collection.JavaConverters._
-import scala.compat.java8.FutureConverters._
-import scala.concurrent.{ExecutionContext, Future}
 
-object AsyncLoadingCache {
+object AsyncLoadingCacheF {
 
-  def apply[K, V](
+  def apply[F[_], K, V](
       asyncLoadingCache: CaffeineAsyncLoadingCache[K, V]
-  ): AsyncLoadingCache[K, V] =
-    new AsyncLoadingCache(asyncLoadingCache)
+  )(implicit async: Async[F]): AsyncLoadingCacheF[F, K, V] =
+    new AsyncLoadingCacheF(asyncLoadingCache)
 }
 
-class AsyncLoadingCache[K, V](
+class AsyncLoadingCacheF[F[_], K, V](
     override val underlying: CaffeineAsyncLoadingCache[K, V]
-) extends AsyncCache[K, V](underlying) {
-  implicit private[this] val ec: ExecutionContext = DirectExecutionContext
+)(implicit override val async: Async[F])
+    extends AsyncCacheF[F, K, V](underlying) {
 
   /**
     * Returns the future associated with `key` in this cache, obtaining that value from
@@ -29,8 +27,8 @@ class AsyncLoadingCache[K, V](
     * @throws java.lang.RuntimeException     or Error if the `loader` does when constructing the future,
     *                                                      in which case the mapping is left unestablished
     */
-  def get(key: K): Future[V] =
-    underlying.get(key).toScala
+  def get(key: K): F[V] =
+    async.fromCompletableFuture(underlying.get(key))
 
   /**
     * Returns the future of a map of the values associated with `keys`, creating or retrieving
@@ -42,19 +40,23 @@ class AsyncLoadingCache[K, V](
     * @return the future containing an mapping of keys to values for the specified keys in this cache
     * @throws java.lang.RuntimeException     or Error if the `loader` does so
     */
-  def getAll(keys: Iterable[K]): Future[Map[K, V]] =
-    underlying.getAll(keys.asJava).toScala.map(_.asScala.toMap)
+  def getAll(keys: Iterable[K]): F[Map[K, V]] =
+    async.map(async.fromCompletableFuture(underlying.getAll(keys.asJava)))(
+      _.asScala.toMap
+    )
 
   /**
-    * Returns a view of the entries stored in this cache as a synchronous [[LoadingCache]]. A
+    * Returns a view of the entries stored in this cache as a synchronous [[LoadingSyncCacheF]]. A
     * mapping is not present if the value is currently being loaded. Modifications made to the
     * synchronous cache directly affect the asynchronous cache. If a modification is made to a
     * mapping that is currently loading, the operation blocks until the computation completes.
     *
     * @return a thread-safe synchronous view of this cache
     */
-  override def synchronous(): LoadingCache[K, V] =
-    LoadingCache(underlying.synchronous())
+  override def synchronous(): LoadingSyncCacheF[async.SyncType, K, V] =
+    LoadingSyncCacheF[async.SyncType, K, V](underlying.synchronous())(
+      async.sync
+    )
 
   override def toString = s"AsyncLoadingCache($underlying)"
 }

@@ -10,7 +10,6 @@ import com.github.benmanes.caffeine.cache.stats.StatsCounter
 import scala.collection.JavaConverters._
 import scala.compat.java8.DurationConverters._
 import scala.compat.java8.FunctionConverters._
-import scala.compat.java8.FutureConverters._
 import scala.concurrent.Future
 import scala.concurrent.duration._
 
@@ -335,7 +334,7 @@ case class Scaffeine[K, V](underlying: caffeine.cache.Caffeine[K, V]) {
     * @return a cache having the requested features
     */
   def build[K1 <: K, V1 <: V](): Cache[K1, V1] =
-    Cache(underlying.build())
+    SyncCacheF(underlying.build())
 
   /**
     * Builds a cache, which either returns an already-loaded value for a given key or atomically
@@ -344,7 +343,7 @@ case class Scaffeine[K, V](underlying: caffeine.cache.Caffeine[K, V]) {
     * value. Note that multiple threads can concurrently load values for distinct keys.
     *
     * @param loader the loader used to obtain new values
-    * @param allLoader the loader used to obtain new values in bulk, called by [[LoadingCache.getAll(keys:Iterable[K])*]]
+    * @param allLoader the loader used to obtain new values in bulk, called by [[LoadingSyncCacheF.getAll(keys:Iterable[K])*]]
     * @param reloadLoader the loader used to obtain already-cached values
     * @tparam K1 the key type of the loader
     * @tparam V1 the value type of the loader
@@ -355,7 +354,7 @@ case class Scaffeine[K, V](underlying: caffeine.cache.Caffeine[K, V]) {
       allLoader: Option[Iterable[K1] => Map[K1, V1]] = None,
       reloadLoader: Option[(K1, V1) => V1] = None
   ): LoadingCache[K1, V1] =
-    LoadingCache(
+    LoadingSyncCacheF(
       underlying.build(
         toCacheLoader(
           loader,
@@ -377,7 +376,7 @@ case class Scaffeine[K, V](underlying: caffeine.cache.Caffeine[K, V]) {
     * @return a cache having the requested features
     */
   def buildAsync[K1 <: K, V1 <: V](): AsyncCache[K1, V1] =
-    AsyncCache(underlying.buildAsync[K1, V1]())
+    AsyncCacheF(underlying.buildAsync[K1, V1]())
 
   /**
     * Builds a cache, which either returns a [[scala.concurrent.Future]] already loaded or currently
@@ -387,7 +386,7 @@ case class Scaffeine[K, V](underlying: caffeine.cache.Caffeine[K, V]) {
     * concurrently load values for distinct keys.
     *
     * @param loader the loader used to obtain new values
-    * @param allLoader the loader used to obtain new values in bulk, called by [[AsyncLoadingCache.getAll(keys:Iterable[K])*]]
+    * @param allLoader the loader used to obtain new values in bulk, called by [[AsyncLoadingCacheF.getAll(keys:Iterable[K])*]]
     * @param reloadLoader the loader used to obtain already-cached values
     * @tparam K1 the key type of the loader
     * @tparam V1 the value type of the loader
@@ -399,7 +398,7 @@ case class Scaffeine[K, V](underlying: caffeine.cache.Caffeine[K, V]) {
       allLoader: Option[Iterable[K1] => Map[K1, V1]] = None,
       reloadLoader: Option[(K1, V1) => V1] = None
   ): AsyncLoadingCache[K1, V1] =
-    AsyncLoadingCache(
+    AsyncLoadingCacheF(
       underlying.buildAsync[K1, V1](
         toCacheLoader(
           loader,
@@ -417,7 +416,7 @@ case class Scaffeine[K, V](underlying: caffeine.cache.Caffeine[K, V]) {
     * Note that multiple threads can concurrently load values for distinct keys.
     *
     * @param loader the loader used to obtain new values
-    * @param allLoader the loader used to obtain new values in bulk, called by [[AsyncLoadingCache.getAll(keys:Iterable[K])*]]
+    * @param allLoader the loader used to obtain new values in bulk, called by [[AsyncLoadingCacheF.getAll(keys:Iterable[K])*]]
     * @param reloadLoader the loader used to obtain already-cached values
     * @tparam K1 the key type of the loader
     * @tparam V1 the value type of the loader
@@ -428,7 +427,7 @@ case class Scaffeine[K, V](underlying: caffeine.cache.Caffeine[K, V]) {
       allLoader: Option[Iterable[K1] => Future[Map[K1, V1]]] = None,
       reloadLoader: Option[(K1, V1) => Future[V1]] = None
   ): AsyncLoadingCache[K1, V1] =
-    AsyncLoadingCache(
+    AsyncLoadingCacheF(
       underlying.buildAsync[K1, V1](
         toAsyncCacheLoader(
           loader,
@@ -438,7 +437,7 @@ case class Scaffeine[K, V](underlying: caffeine.cache.Caffeine[K, V]) {
       )
     )
 
-  private[this] def toCacheLoader[K1 <: K, V1 <: V](
+  private[scaffeine] def toCacheLoader[K1 <: K, V1 <: V](
       loader: K1 => V1,
       allLoader: Option[Iterable[K1] => Map[K1, V1]],
       reloadLoader: Option[(K1, V1) => V1]
@@ -454,25 +453,34 @@ case class Scaffeine[K, V](underlying: caffeine.cache.Caffeine[K, V]) {
         new CacheLoaderAdapter[K1, V1](loader, reloadLoader)
     }
 
-  private[this] def toAsyncCacheLoader[K1 <: K, V1 <: V](
-      loader: K1 => Future[V1],
-      allLoader: Option[Iterable[K1] => Future[Map[K1, V1]]],
-      reloadLoader: Option[(K1, V1) => Future[V1]]
-  ): caffeine.cache.AsyncCacheLoader[K1, V1] =
+  private[scaffeine] def toAsyncCacheLoader[F[_], K1 <: K, V1 <: V](
+      loader: K1 => F[V1],
+      allLoader: Option[Iterable[K1] => F[Map[K1, V1]]],
+      reloadLoader: Option[(K1, V1) => F[V1]]
+  )(implicit async: Async[F]): caffeine.cache.AsyncCacheLoader[K1, V1] = {
+    val completableFutureLoader = loader andThen async.toCompletableFuture
+    val completableFutureReloadLoader
+        : Option[(K1, V1) => CompletableFuture[V1]] =
+      reloadLoader.map(f => (x, y) => async.toCompletableFuture(f(x, y)))
+
     allLoader match {
       case Some(l) =>
-        new AsyncCacheLoaderAdapter[K1, V1](loader, reloadLoader) {
+        new AsyncCacheLoaderAdapter[K1, V1](
+          completableFutureLoader,
+          completableFutureReloadLoader
+        ) {
 
           override def asyncLoadAll(
               keys: lang.Iterable[_ <: K1],
               executor: Executor
           ): CompletableFuture[util.Map[K1, V1]] =
-            l(keys.asScala)
-              .map(_.asJava)(DirectExecutionContext)
-              .toJava
-              .toCompletableFuture
+            async.toCompletableFuture(async.map(l(keys.asScala))(_.asJava))
         }
       case None =>
-        new AsyncCacheLoaderAdapter[K1, V1](loader, reloadLoader)
+        new AsyncCacheLoaderAdapter[K1, V1](
+          completableFutureLoader,
+          completableFutureReloadLoader
+        )
     }
+  }
 }

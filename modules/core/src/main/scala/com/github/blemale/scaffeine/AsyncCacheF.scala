@@ -6,17 +6,19 @@ import com.github.benmanes.caffeine.cache.{AsyncCache => CaffeineAsyncCache}
 
 import scala.collection.JavaConverters._
 import scala.compat.java8.FunctionConverters._
-import scala.compat.java8.FutureConverters._
-import scala.concurrent.{ExecutionContext, Future}
 
-object AsyncCache {
+object AsyncCacheF {
 
-  def apply[K, V](asyncCache: CaffeineAsyncCache[K, V]): AsyncCache[K, V] =
-    new AsyncCache(asyncCache)
+  def apply[F[_], K, V](asyncCache: CaffeineAsyncCache[K, V])(implicit
+      async: Async[F]
+  ): AsyncCacheF[F, K, V] =
+    new AsyncCacheF(asyncCache)
 }
 
-class AsyncCache[K, V](val underlying: CaffeineAsyncCache[K, V]) {
-  implicit private[this] val ec: ExecutionContext = DirectExecutionContext
+class AsyncCacheF[F[_], K, V](val underlying: CaffeineAsyncCache[K, V])(implicit
+    val
+    async: Async[F]
+) {
 
   /**
     * Returns the future associated with `key` in this cache, or `None` if there is no
@@ -26,8 +28,8 @@ class AsyncCache[K, V](val underlying: CaffeineAsyncCache[K, V]) {
     * @return an option containing the current (existing or computed) future value to which the
     *         specified key is mapped, or `None` if this map contains no mapping for the key
     */
-  def getIfPresent(key: K): Option[Future[V]] =
-    Option(underlying.getIfPresent(key)).map(_.toScala)
+  def getIfPresent(key: K): Option[F[V]] =
+    Option(underlying.getIfPresent(key)).map(async.fromCompletableFuture)
 
   /**
     * Returns the future associated with `key` in this cache, obtaining that value from
@@ -38,8 +40,10 @@ class AsyncCache[K, V](val underlying: CaffeineAsyncCache[K, V]) {
     * @param mappingFunction the function to asynchronously compute a value
     * @return the current (existing or computed) future value associated with the specified key
     */
-  def get(key: K, mappingFunction: K => V): Future[V] =
-    underlying.get(key, asJavaFunction(mappingFunction)).toScala
+  def get(key: K, mappingFunction: K => V): F[V] =
+    async.fromCompletableFuture(
+      underlying.get(key, asJavaFunction(mappingFunction))
+    )
 
   /**
     * Returns the future associated with `key` in this cache, obtaining that value from
@@ -52,15 +56,16 @@ class AsyncCache[K, V](val underlying: CaffeineAsyncCache[K, V]) {
     * @throws java.lang.RuntimeException     or Error if the mappingFunction does when constructing the future,
     *                              in which case the mapping is left unestablished
     */
-  def getFuture(key: K, mappingFunction: K => Future[V]): Future[V] =
-    underlying
-      .get(
-        key,
-        asJavaBiFunction((k: K, _: Executor) =>
-          mappingFunction(k).toJava.toCompletableFuture
+  def getFuture(key: K, mappingFunction: K => F[V]): F[V] =
+    async.fromCompletableFuture(
+      underlying
+        .get(
+          key,
+          asJavaBiFunction((k: K, _: Executor) =>
+            async.toCompletableFuture(mappingFunction(k))
+          )
         )
-      )
-      .toScala
+    )
 
   /**
     * Returns the future of a map of the values associated with `keys`, creating or retrieving
@@ -81,16 +86,18 @@ class AsyncCache[K, V](val underlying: CaffeineAsyncCache[K, V]) {
   def getAll(
       keys: Iterable[K],
       mappingFunction: Iterable[K] => Map[K, V]
-  ): Future[Map[K, V]] =
-    underlying
-      .getAll(
-        keys.asJava,
-        asJavaFunction((ks: java.lang.Iterable[_ <: K]) =>
-          mappingFunction(ks.asScala).asJava
-        )
+  ): F[Map[K, V]] =
+    async.map(
+      async.fromCompletableFuture(
+        underlying
+          .getAll(
+            keys.asJava,
+            asJavaFunction((ks: java.lang.Iterable[_ <: K]) =>
+              mappingFunction(ks.asScala).asJava
+            )
+          )
       )
-      .toScala
-      .map(_.asScala.toMap)
+    )(_.asScala.toMap)
 
   /**
     * Returns the future of a map of the values associated with `keys`, creating or retrieving
@@ -110,17 +117,21 @@ class AsyncCache[K, V](val underlying: CaffeineAsyncCache[K, V]) {
     */
   def getAllFuture(
       keys: Iterable[K],
-      mappingFunction: Iterable[K] => Future[Map[K, V]]
-  ): Future[Map[K, V]] =
-    underlying
-      .getAll(
-        keys.asJava,
-        asJavaBiFunction((ks: java.lang.Iterable[_ <: K], _: Executor) =>
-          mappingFunction(ks.asScala).map(_.asJava).toJava.toCompletableFuture
-        )
+      mappingFunction: Iterable[K] => F[Map[K, V]]
+  ): F[Map[K, V]] =
+    async.map(
+      async.fromCompletableFuture(
+        underlying
+          .getAll(
+            keys.asJava,
+            asJavaBiFunction((ks: java.lang.Iterable[_ <: K], _: Executor) =>
+              async.toCompletableFuture(
+                async.map(mappingFunction(ks.asScala))(_.asJava)
+              )
+            )
+          )
       )
-      .toScala
-      .map(_.asScala.toMap)
+    )(_.asScala.toMap)
 
   /**
     * Associates `value` with `key` in this cache. If the cache previously contained a
@@ -128,20 +139,20 @@ class AsyncCache[K, V](val underlying: CaffeineAsyncCache[K, V]) {
     * asynchronous computation fails, the entry will be automatically removed.
     *
     * @param key         key with which the specified value is to be associated
-    * @param valueFuture value to be associated with the specified key
+    * @param value value to be associated with the specified key
     */
-  def put(key: K, valueFuture: Future[V]): Unit =
-    underlying.put(key, valueFuture.toJava.toCompletableFuture)
+  def put(key: K, value: F[V]): async.SyncType[Unit] =
+    async.sync.lift(underlying.put(key, async.toCompletableFuture(value)))
 
   /**
-    * Returns a view of the entries stored in this cache as a synchronous [[Cache]]. A
+    * Returns a view of the entries stored in this cache as a synchronous [[SyncCacheF]]. A
     * mapping is not present if the value is currently being loaded. Modifications made to the
     * synchronous cache directly affect the asynchronous cache. If a modification is made to a
     * mapping that is currently loading, the operation blocks until the computation completes.
     *
     * @return a thread-safe synchronous view of this cache
     */
-  def synchronous(): Cache[K, V] =
-    Cache(underlying.synchronous())
+  def synchronous(): SyncCacheF[async.SyncType, K, V] =
+    SyncCacheF[async.SyncType, K, V](underlying.synchronous())(async.sync)
 
 }
