@@ -14,9 +14,7 @@ package object scaffeine {
   type AsyncLoadingCache[K, V] = AsyncLoadingCacheF[Future, K, V]
 
   implicit val idSync: Sync[Id] = new Sync[Id] {
-
-    override def lift[A](a: A): Id[A] =
-      a
+    override def suspend[A](a: A): Id[A] = a
   }
 
   implicit val futureAsync: Async[Future] = new Async[Future] {
@@ -31,8 +29,7 @@ package object scaffeine {
 
     override def fromCompletableFuture[A](
         future: CompletableFuture[A]
-    ): Future[A] =
-      future.toScala
+    ): Future[A] = future.toScala
 
     override def toCompletableFuture[A](fa: Future[A]): CompletableFuture[A] =
       fa.toJava.toCompletableFuture

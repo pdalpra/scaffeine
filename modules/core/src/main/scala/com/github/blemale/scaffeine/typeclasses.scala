@@ -3,7 +3,7 @@ package com.github.blemale.scaffeine
 import java.util.concurrent.CompletableFuture
 
 trait Sync[F[_]] {
-  def lift[A](a: A): F[A]
+  def suspend[A](a: A): F[A]
 }
 
 trait Async[F[_]] {

@@ -6,10 +6,8 @@ import scala.collection.JavaConverters._
 
 object LoadingSyncCacheF {
 
-  def apply[F[_], K, V](
+  def apply[F[_]: Sync, K, V](
       loadingCache: CaffeineLoadingCache[K, V]
-  )(implicit
-      lift: Sync[F]
   ): LoadingSyncCacheF[F, K, V] =
     new LoadingSyncCacheF(loadingCache)
 }
@@ -17,7 +15,7 @@ object LoadingSyncCacheF {
 class LoadingSyncCacheF[F[_], K, V](
     override val underlying: CaffeineLoadingCache[K, V]
 )(implicit
-    lift: Sync[F]
+    sync: Sync[F]
 ) extends SyncCacheF[F, K, V](underlying) {
 
   /**
@@ -37,7 +35,7 @@ class LoadingSyncCacheF[F[_], K, V](
     *                                                       is left unestablished
     */
   def get(key: K): F[V] =
-    lift.lift(underlying.get(key))
+    sync.suspend(underlying.get(key))
 
   /**
     * Returns a map of the values associated with `keys`, creating or retrieving those values
@@ -50,7 +48,7 @@ class LoadingSyncCacheF[F[_], K, V](
     * @throws java.lang.RuntimeException     or Error if the `loader` does so
     */
   def getAll(keys: Iterable[K]): F[Map[K, V]] =
-    lift.lift(underlying.getAll(keys.asJava).asScala.toMap)
+    sync.suspend(underlying.getAll(keys.asJava).asScala.toMap)
 
   /**
     * Loads a new value for the `key`, asynchronously. While the new value is loading the
@@ -59,7 +57,7 @@ class LoadingSyncCacheF[F[_], K, V](
     * @param key key with which a value may be associated
     */
   def refresh(key: K): F[Unit] =
-    lift.lift(underlying.refresh(key))
+    sync.suspend(underlying.refresh(key))
 
   override def toString = s"LoadingCache($underlying)"
 }

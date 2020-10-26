@@ -8,14 +8,12 @@ import scala.compat.java8.FunctionConverters._
 
 object SyncCacheF {
 
-  def apply[F[_], K, V](cache: CaffeineCache[K, V])(implicit
-      lift: Sync[F]
-  ): SyncCacheF[F, K, V] =
+  def apply[F[_]: Sync, K, V](cache: CaffeineCache[K, V]): SyncCacheF[F, K, V] =
     new SyncCacheF(cache)
 }
 
 class SyncCacheF[F[_], K, V](val underlying: CaffeineCache[K, V])(implicit
-    lift: Sync[F]
+    sync: Sync[F]
 ) {
 
   /**
@@ -27,7 +25,7 @@ class SyncCacheF[F[_], K, V](val underlying: CaffeineCache[K, V])(implicit
     *         or `None` if this map contains no mapping for the key
     */
   def getIfPresent(key: K): F[Option[V]] =
-    lift.lift(Option(underlying.getIfPresent(key)))
+    sync.suspend(Option(underlying.getIfPresent(key)))
 
   /**
     * Returns the value associated with `key` in this cache, obtaining that value from
@@ -43,7 +41,7 @@ class SyncCacheF[F[_], K, V](val underlying: CaffeineCache[K, V])(implicit
     *                               left unestablished
     */
   def get(key: K, mappingFunction: K => V): F[V] =
-    lift.lift(underlying.get(key, mappingFunction.asJava))
+    sync.suspend(underlying.get(key, mappingFunction.asJava))
 
   /**
     * Returns a map of the values associated with `keys` in this cache. The returned map will
@@ -53,7 +51,7 @@ class SyncCacheF[F[_], K, V](val underlying: CaffeineCache[K, V])(implicit
     * @return the mapping of keys to values for the specified keys found in this cache
     */
   def getAllPresent(keys: Iterable[K]): F[Map[K, V]] =
-    lift.lift(underlying.getAllPresent(keys.asJava).asScala.toMap)
+    sync.suspend(underlying.getAllPresent(keys.asJava).asScala.toMap)
 
   /**
     * Returns the future of a map of the values associated with `keys`, creating or retrieving
@@ -73,7 +71,7 @@ class SyncCacheF[F[_], K, V](val underlying: CaffeineCache[K, V])(implicit
       keys: Iterable[K],
       mappingFunction: Iterable[K] => Map[K, V]
   ): F[Map[K, V]] =
-    lift.lift(
+    sync.suspend(
       underlying
         .getAll(
           keys.asJava,
@@ -93,7 +91,7 @@ class SyncCacheF[F[_], K, V](val underlying: CaffeineCache[K, V])(implicit
     * @param value value to be associated with the specified key
     */
   def put(key: K, value: V): F[Unit] =
-    lift.lift(underlying.put(key, value))
+    sync.suspend(underlying.put(key, value))
 
   /**
     * Copies all of the mappings from the specified map to the cache.
@@ -101,7 +99,7 @@ class SyncCacheF[F[_], K, V](val underlying: CaffeineCache[K, V])(implicit
     * @param map mappings to be stored in this cache
     */
   def putAll(map: Map[K, V]): F[Unit] =
-    lift.lift(underlying.putAll(map.asJava))
+    sync.suspend(underlying.putAll(map.asJava))
 
   /**
     * Discards any cached value for key `key`.
@@ -109,7 +107,7 @@ class SyncCacheF[F[_], K, V](val underlying: CaffeineCache[K, V])(implicit
     * @param key key whose mapping is to be removed from the cache
     */
   def invalidate(key: K): F[Unit] =
-    lift.lift(underlying.invalidate(key))
+    sync.suspend(underlying.invalidate(key))
 
   /**
     * Discards any cached values for keys `keys`.
@@ -117,21 +115,21 @@ class SyncCacheF[F[_], K, V](val underlying: CaffeineCache[K, V])(implicit
     * @param keys the keys whose associated values are to be removed
     */
   def invalidateAll(keys: Iterable[K]): F[Unit] =
-    lift.lift(underlying.invalidateAll(keys.asJava))
+    sync.suspend(underlying.invalidateAll(keys.asJava))
 
   /**
     * Discards all entries in the cache.
     */
   def invalidateAll(): F[Unit] =
-    lift.lift(underlying.invalidateAll())
+    sync.suspend(underlying.invalidateAll())
 
   /**
     * Returns the approximate number of entries in this cache.
     *
     * @return the estimated number of mappings
     */
-  def estimatedSize(): Long =
-    underlying.estimatedSize()
+  def estimatedSize(): F[Long] =
+    sync.suspend(underlying.estimatedSize())
 
   /**
     * Returns a current snapshot of this cache's cumulative statistics. All statistics are
@@ -140,7 +138,7 @@ class SyncCacheF[F[_], K, V](val underlying: CaffeineCache[K, V])(implicit
     * @return the current snapshot of the statistics of this cache
     */
   def stats(): F[CacheStats] =
-    lift.lift(underlying.stats())
+    sync.suspend(underlying.stats())
 
   /**
     * Returns a view of the entries stored in this cache as a thread-safe map. Modifications made to
@@ -149,14 +147,14 @@ class SyncCacheF[F[_], K, V](val underlying: CaffeineCache[K, V])(implicit
     * @return a thread-safe view of this cache
     */
   def asMap(): F[collection.concurrent.Map[K, V]] =
-    lift.lift(underlying.asMap().asScala)
+    sync.suspend(underlying.asMap().asScala)
 
   /**
     * Performs any pending maintenance operations needed by the cache. Exactly which activities are
     * performed -- if any -- is implementation-dependent.
     */
   def cleanUp(): F[Unit] =
-    lift.lift(underlying.cleanUp())
+    sync.suspend(underlying.cleanUp())
 
   /**
     * Returns access to inspect and perform low-level operations on this cache based on its runtime
@@ -166,7 +164,7 @@ class SyncCacheF[F[_], K, V](val underlying: CaffeineCache[K, V])(implicit
     * @return access to inspect and perform advanced operations based on the cache's characteristics
     */
   def policy(): F[Policy[K, V]] =
-    lift.lift(underlying.policy())
+    sync.suspend(underlying.policy())
 
   override def toString = s"Cache($underlying)"
 }

@@ -4,6 +4,8 @@ import java.util.concurrent.{CancellationException, CompletableFuture, Completio
 
 import scala.compat.java8.FunctionConverters._
 
+import cats.{effect => ce}
+
 object catseffect {
 
   implicit class CatsEffectScaffeine[K, V](val scaffeine: Scaffeine[K, V]) {
@@ -15,8 +17,7 @@ object catseffect {
       * @tparam V1 the value type of the cache
       * @return a cache having the requested features
       */
-    def buildSyncF[F[_]: cats.effect.Sync, K1 <: K, V1 <: V]()
-        : SyncCacheF[F, K1, V1] =
+    def buildSyncF[F[_]: ce.Sync, K1 <: K, V1 <: V](): SyncCacheF[F, K1, V1] =
       SyncCacheF[F, K1, V1](scaffeine.underlying.build())
 
     /**
@@ -32,7 +33,7 @@ object catseffect {
       * @tparam V1 the value type of the loader
       * @return a cache having the requested features
       */
-    def buildSyncF[F[_]: cats.effect.Sync, K1 <: K, V1 <: V](
+    def buildSyncF[F[_]: ce.Sync, K1 <: K, V1 <: V](
         loader: K1 => V1,
         allLoader: Option[Iterable[K1] => Map[K1, V1]] = None,
         reloadLoader: Option[(K1, V1) => V1] = None
@@ -48,37 +49,22 @@ object catseffect {
       )
 
     /**
-      * Builds a cache, which either returns a [[scala.concurrent.Future]] already loaded or currently
-      * computing the value for a given key, or atomically computes the value asynchronously through a
-      * supplied mapping function or the supplied `loader`. If the asynchronous computation
-      * fails then the entry will be automatically removed. Note that multiple threads can
-      * concurrently load values for distinct keys.
+      * Builds a cache which does not automatically load values when keys are requested unless a
+      * mapping function is provided. The returned `F[_]` may be already loaded or
+      * currently computing the value for a given key. If the asynchronous computation fails
+      * value then the entry will be automatically removed. Note that multiple
+      * threads can concurrently load values for distinct keys.
       *
-      * @param loader the loader used to obtain new values
-      * @param allLoader the loader used to obtain new values in bulk, called by [[AsyncLoadingCacheF.getAll(keys:Iterable[K])*]]
-      * @param reloadLoader the loader used to obtain already-cached values
-      * @tparam K1 the key type of the loader
-      * @tparam V1 the value type of the loader
+      * @tparam K1 the key type of the cache
+      * @tparam V1 the value type of the cache
       * @return a cache having the requested features
-      * @throws java.lang.IllegalStateException if the value strength is weak or soft
       */
-    def buildAsyncF[F[_]: cats.effect.Async, K1 <: K, V1 <: V](
-        loader: K1 => V1,
-        allLoader: Option[Iterable[K1] => Map[K1, V1]] = None,
-        reloadLoader: Option[(K1, V1) => V1] = None
-    ): AsyncLoadingCacheF[F, K1, V1] =
-      AsyncLoadingCacheF(
-        scaffeine.underlying.buildAsync[K1, V1](
-          scaffeine.toCacheLoader(
-            loader,
-            allLoader,
-            reloadLoader
-          )
-        )
-      )
+    def buildAsyncF[F[_]: ce.Async, K1 <: K, V1 <: V]()
+        : AsyncCacheF[F, K1, V1] =
+      AsyncCacheF(scaffeine.underlying.buildAsync[K1, V1]())
 
     /**
-      * Builds a cache, which either returns a [[scala.concurrent.Future]] already loaded or currently
+      * Builds a cache, which either returns a `F[_]` already loaded or currently
       * computing the value for a given key, or atomically computes the value asynchronously through a
       * supplied mapping function or the supplied async `loader`. If the asynchronous
       * computation fails then the entry will be automatically removed.
@@ -89,22 +75,24 @@ object catseffect {
       * @param reloadLoader the loader used to obtain already-cached values
       * @tparam K1 the key type of the loader
       * @tparam V1 the value type of the loader
-      * @throws java.lang.IllegalStateException if the value strength is weak or soft
       */
-    def buildAsyncFF[F[_]: cats.effect.Async, K1 <: K, V1 <: V](
+    def buildAsyncF[F[_]: ce.Async, K1 <: K, V1 <: V](
         loader: K1 => F[V1],
         allLoader: Option[Iterable[K1] => F[Map[K1, V1]]] = None,
         reloadLoader: Option[(K1, V1) => F[V1]] = None
-    ): AsyncLoadingCacheF[F, K1, V1] =
-      AsyncLoadingCacheF(
-        scaffeine.underlying.buildAsync[K1, V1](
-          scaffeine.toAsyncCacheLoader(
-            loader,
-            allLoader,
-            reloadLoader
+    ): F[AsyncLoadingCacheF[F, K1, V1]] =
+      ce.Sync[F]
+        .delay(
+          AsyncLoadingCacheF(
+            scaffeine.underlying.buildAsync[K1, V1](
+              scaffeine.toAsyncCacheLoader(
+                loader,
+                allLoader,
+                reloadLoader
+              )
+            )
           )
         )
-      )
   }
 
   implicit def catsEffectSync[F[_]](implicit
@@ -112,7 +100,7 @@ object catseffect {
   ): Sync[F] =
     new Sync[F] {
 
-      override def lift[A](a: A): F[A] =
+      override def suspend[A](a: A): F[A] =
         underlying.delay(a)
     }
 

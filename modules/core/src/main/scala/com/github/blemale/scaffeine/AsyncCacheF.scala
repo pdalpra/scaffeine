@@ -9,8 +9,8 @@ import scala.compat.java8.FunctionConverters._
 
 object AsyncCacheF {
 
-  def apply[F[_], K, V](asyncCache: CaffeineAsyncCache[K, V])(implicit
-      async: Async[F]
+  def apply[F[_]: Async, K, V](
+      asyncCache: CaffeineAsyncCache[K, V]
   ): AsyncCacheF[F, K, V] =
     new AsyncCacheF(asyncCache)
 }
@@ -142,7 +142,7 @@ class AsyncCacheF[F[_], K, V](val underlying: CaffeineAsyncCache[K, V])(implicit
     * @param value value to be associated with the specified key
     */
   def put(key: K, value: F[V]): async.SyncType[Unit] =
-    async.sync.lift(underlying.put(key, async.toCompletableFuture(value)))
+    async.sync.suspend(underlying.put(key, async.toCompletableFuture(value)))
 
   /**
     * Returns a view of the entries stored in this cache as a synchronous [[SyncCacheF]]. A

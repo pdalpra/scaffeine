@@ -6,9 +6,9 @@ import scala.collection.JavaConverters._
 
 object AsyncLoadingCacheF {
 
-  def apply[F[_], K, V](
+  def apply[F[_]: Async, K, V](
       asyncLoadingCache: CaffeineAsyncLoadingCache[K, V]
-  )(implicit async: Async[F]): AsyncLoadingCacheF[F, K, V] =
+  ): AsyncLoadingCacheF[F, K, V] =
     new AsyncLoadingCacheF(asyncLoadingCache)
 }
 

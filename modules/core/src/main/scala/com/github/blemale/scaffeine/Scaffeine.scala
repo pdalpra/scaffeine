@@ -437,7 +437,7 @@ case class Scaffeine[K, V](underlying: caffeine.cache.Caffeine[K, V]) {
       )
     )
 
-  private[scaffeine] def toCacheLoader[K1 <: K, V1 <: V](
+  private[scaffeine] def toCacheLoader[F[_], K1 <: K, V1 <: V](
       loader: K1 => V1,
       allLoader: Option[Iterable[K1] => Map[K1, V1]],
       reloadLoader: Option[(K1, V1) => V1]

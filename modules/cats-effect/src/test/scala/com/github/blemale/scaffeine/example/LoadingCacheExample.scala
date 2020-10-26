@@ -17,7 +17,7 @@ class LoadingCacheExample extends AnyFlatSpec with Matchers {
         .recordStats()
         .expireAfterWrite(1.hour)
         .maximumSize(500)
-        .buildSyncF((i: Int) => s"foo$i")
+        .buildSyncF(i => s"foo$i")
 
     cache.get(1).unsafeRunSync() should be("foo1")
 

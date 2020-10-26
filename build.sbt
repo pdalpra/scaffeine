@@ -32,7 +32,7 @@ lazy val core = (project in file("modules/core"))
 
 lazy val `cats-effect` = (project in file("modules/cats-effect"))
   .settings(commonSettings: _*)
-  .dependsOn(core)
+  .dependsOn(core % "compile->compile;test->test")
   .settings(libraryDependencies := testDependencies)
   .settings(
     libraryDependencies += (CrossVersion
